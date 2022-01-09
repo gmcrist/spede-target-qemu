@@ -1,0 +1,236 @@
+#!/bin/bash
+
+spede_root=${SPEDE_ROOT:-/opt/spede}
+
+typeset -A qemu_defaults
+qemu_defaults=(
+    [monitor]=""
+    [display]="-display gtk,grab-on-hover=off"
+    [socket]="./spede.sock"
+    [logfile]="./spede.log"
+    [image]="${spede_root}/share/images/spede-target/spede-target.qcow2"
+    [qemu]="qemu-system-i386"
+    [background]=1
+    [console]=0
+    [xsession]=1
+)
+
+typeset -A qemu_config
+for i in ${!qemu_defaults[*]}; do
+    qemu_config[${i}]=${qemu_defaults[${i}]}
+done
+
+function usage() {
+    self=$(basename $0)
+    echo "Usage: ${self} [options]"
+    echo ""
+    echo "Options:"
+    echo "  -d | --display     Specifies which type of display to support:"
+    echo "                       vnc:     Creates a VNC server"
+    echo "                       term:    Outputs to the current terminal/console"
+    echo "                       default: Opens a window in the current desktop session"
+    echo ""
+    echo "  -m | --monitor     Enables the QEMU monitor via standard input/output"
+    echo "                       console: Opens the monitor on the current console"
+    echo "                       socket:  Opens the monitor on a socket"
+    echo "                       default: none"
+    echo ""
+    echo "  -s | --socket      Specifies the control socket location for other scripts"
+    echo "                     or programs to communicate with the QEMU session"
+    echo "                       default: ./qemu.sock"
+    echo ""
+    echo "  -l | --logfile     Specifies the log file location"
+    echo "                       default: ./qemu.sock"
+    echo ""
+    echo "  -i | --image       Specifies the SPEDE Target image to execute (not .dli)"
+    echo ""
+    echo "SPEDE Target will run the background unless one of the following options"
+    echo "are specified:"
+    echo "  --monitor console"
+    echo "  --display term"
+    echo ""
+    echo "If both '--monitor console' and '--display term' are configured, '--display'"
+    echo "will be reset to default"
+    echo ""
+}
+
+function check_deps() {
+    qemu=$(which ${qemu_config[qemu]})
+    if [[ $? -ne 0 || ! -x ${qemu} ]]; then
+        echo "QEMU is not installed or cannot be executed"
+        return 1
+    fi
+    return 0
+}
+
+function main() {
+    check_deps || return $?
+
+    temp=$(getopt -o hm:d:s:l:i: --long help,monitor:,display:,socket:,logfile:,image: -n spede-target -- "$@")
+    while true; do
+        case "$1" in
+            -h | --help)
+                usage
+                return 0
+                ;;
+
+            -m | --monitor)
+                case "$2" in
+                    console)
+                        qemu_config[monitor]="-monitor stdio"
+                        qemu_config[background]=0
+                        qemu_config[console]+=1
+                        ;;
+
+                    socket)
+                        qemu_config[monitor]="-monitor unix:spede-monitor.sock,server,nowait"
+                        ;;
+
+                    default)
+                        ;;
+
+                    *)
+                        usage
+                        return 1
+                        ;;
+                esac
+
+                shift 2
+                ;;
+
+            -d | --display)
+                case "$2" in
+                    console)
+                        qemu_config[display]="-display curses"
+                        qemu_config[background]=0
+                        qemu_config[console]+=1
+                        qemu_config[xsession]=0;
+                        ;;
+
+                    vnc)
+                        qemu_config[display]="-display vnc=:0"
+                        qemu_config[xsession]=0;
+                        ;;
+
+                    default)
+                        ;;
+
+                    *)
+                        usage
+                        return 1
+                        ;;
+                esac
+
+                shift 2
+                ;;
+
+            -s | --socket)
+                qemu_config[socket]=$2
+                shift 2
+                ;;
+
+            -l | --logfile)
+                qemu_config[logfile]=$2
+                shift 2
+                ;;
+
+            -i | --image)
+                qemu_config[image]=$2
+                shift 2
+                ;;
+
+            -- )
+                shift
+                break
+                ;;
+
+            *)
+                break
+                ;;
+        esac
+    done
+
+    if [ ${qemu_config[console]} -gt 1 ]; then
+        echo "Monitor is configured for console, resetting display to default"
+        qemu_config[display]=${qemu_defaults[display]}
+        qemu_config[xsession]=1
+    fi
+
+    if [[ -v CONFIG_DUMP ]]; then
+        echo "SPEDE Root: ${spede_root}"
+        echo ""
+
+        echo "Defaults:"
+        for i in ${!qemu_defaults[*]}; do
+            echo "  ${i}: ${qemu_defaults[${i}]}"
+        done
+        echo ""
+
+        echo "Config:"
+        for i in ${!qemu_config[*]}; do
+            echo "  ${i}: ${qemu_config[${i}]}"
+        done
+        echo ""
+
+        return
+    fi
+
+    if [ ${qemu_config[xsession]} -eq 1 ]; then
+        xhost >&/dev/null
+        if [ $? -ne 0 ]; then
+            echo "Error: Display is configured to use local desktop session but none exists"
+            return 1
+        fi
+    fi
+
+    if [ -S ${qemu_config[socket]} ]; then
+        echo "Socket '${qemu_config[socket]}' already exists. Exiting..."
+        return 1
+    elif [ -f ${qemu_config[socket]} ]; then
+        echo "Socket '${qemu_config[socket]}' is not a valid socket. Exiting..."
+        return 1
+    fi
+
+    if [ ${qemu_config[background]} -ne 0 ]; then
+        echo "Launching SPEDE target to run in the background"
+        launch_spede_target >>${qemu_config[logfile]} 2>&1 &
+    else
+        echo "Launching SPEDE target to run in the foreground"
+        launch_spede_target
+
+        # Remove the socket once the spede target exits
+        if [ -S ${qemu_config[socket]} ]; then
+            rm ${qemu_config[socket]}
+        fi
+    fi
+}
+
+function launch_spede_target() {
+    echo "Target is reachable via ${qemu_config[socket]}"
+
+    ${qemu_config[qemu]} \
+        -name "SPEDE Target" \
+        -M pc \
+        -cpu 486 \
+        -smp 1 \
+        -m 32M \
+        -snapshot \
+        -drive file=${qemu_config[image]} \
+        -chardev pty,id=com1 \
+        -serial chardev:com1 \
+        -chardev pty,id=com2 \
+        -serial chardev:com2 \
+        -chardev pty,id=com3 \
+        -serial chardev:com3 \
+        -chardev pty,id=com4 \
+        -serial chardev:com4 \
+        -net none \
+        -d cpu_reset,guest_errors \
+        -D ${qemu_config[logfile]} \
+        -qmp unix:${qemu_config[socket]},server,nowait \
+        ${qemu_config[display]} \
+        ${qemu_config[monitor]} 2>&1
+}
+
+main $@
+exit $?

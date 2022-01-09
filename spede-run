@@ -1,0 +1,253 @@
+#!/bin/bash
+
+spede_root=${SPEDE_ROOT:-/opt/spede}
+
+typeset -A run_defaults
+run_defaults=(
+    [auto]=0
+    [image]="build/MyOS.dli"
+    [socket]="spede.sock"
+    [localrc]="./local.gdbinit"
+    [spederc]="${spede_root}/etc/spede.gdbinit"
+    [qmp]="${spede_root}/bin/qemu-qmp"
+    [dl]="${spede_root}/bin/dl"
+    [fs]="${spede_root}/bin/flash-sup"
+    [gdb]="/usr/bin/gdb"
+    [gdb_helpers]="${spede_root}/lib/gdb_helpers.py"
+)
+
+typeset -A run_config
+for i in ${!run_defaults[*]}; do
+    run_config[${i}]=${run_defaults[${i}]}
+done
+
+function usage() {
+    self=$(basename $0)
+    echo "Usage: ${self} [options] <image>"
+    echo ""
+    echo "Options:"
+    echo " -s | --socket     Specifies the control socket location for the"
+    echo "                   SPEDE target"
+    echo ""
+    echo " -a | --auto       Automatically proceed with any confirmation prompts"
+    echo ""
+}
+
+function check_deps() {
+    jq=$(which jq)
+    if [[ $? -ne 0 || ! -x ${jq} ]]; then
+        echo "Error: jq is not installed or not executable"
+        return 1
+    fi
+
+    qmp=$(which ${run_config[qmp]})
+    if [[ $? -ne 0 || ! -x ${qmp} ]]; then
+        echo "Error: QEMU QMP is not installed or is not executable"
+        return 1
+    fi
+
+    dl=$(which ${run_config[dl]})
+    if [[ $? -ne 0 || ! -x ${dl} ]]; then
+        echo "Error: SPEDE Tools are not installed or are not executable"
+        return 1
+    fi
+
+    fs=$(which ${run_config[fs]})
+    if [[ $? -ne 0 || ! -x ${fs} ]]; then
+        echo "Error: SPEDE Tools are not installed or are not executable"
+        return 1
+    fi
+
+    if [ ! -x ${run_config[gdb]} ]; then
+        echo "Error: GDB ('${run_config[gdb]}') is not executable"
+        return 1
+    fi
+}
+
+function main() {
+    check_deps || return $?
+
+    temp=$(getopt -o has: --long help,auto,socket: -n spede-run -- "$@")
+    while true; do
+        case "$1" in
+            -h | --help)
+                usage
+                return 0
+                ;;
+
+            -a | --auto)
+                run_config[auto]=1
+                shift
+                ;;
+
+            -s | --socket)
+                run_config[socket]=$2
+                shift 2
+                ;;
+
+            -- )
+                shift
+                break
+                ;;
+
+            *) break
+                ;;
+        esac
+    done
+
+    if [[ -v CONFIG_DUMP ]]; then
+        echo ""
+        echo "Defaults:"
+        for i in ${!run_defaults[*]}; do
+            echo "  ${i}: ${run_defaults[${i}]}"
+        done
+        echo ""
+
+        echo "Config:"
+        for i in ${!run_config[*]}; do
+            echo "  ${i}: ${run_config[${i}]}"
+        done
+        echo ""
+
+        return
+    fi
+
+    image=${1:-${run_config[image]}}
+    if [ ! -f ${image} ]; then
+        echo "Image '${image}' cannot be found"
+        return 1
+    fi
+
+    if [ ! -S ${run_config[socket]} ]; then
+        echo "Socket '${run_config[socket]}' does not exist. Exiting..."
+        return 1
+    fi
+
+    # Determine if the SPEDE target is running
+    # If it is _not_ running, display a message and exit
+    status=$(spede_target_status)
+
+    if [[ $? -ne 0 || "${status}" != "running" ]]; then
+        echo "The SPEDE Target does not appear to be running."
+        echo "Ensure that you have started the SPEDE Target."
+
+        echo "Status: ${status}"
+        return 1
+    fi
+
+    # If we don't have auto-confirm enabled, prompt the user
+    if [ ${run_config[auto]} -eq 0 ]; then
+        read -p "The SPEDE Target will be reset, are you sure? (y/n) " confirm
+        case "${confirm}" in
+            [yY]|[yY][eE][sS] )
+                ;;
+
+            *)
+                echo "Exiting..."
+                return 1
+                ;;
+        esac
+    fi
+
+    # Reset the SPEDE Target system
+    echo "Resetting SPEDE Target..."
+    output=$(__qemu_exec system_reset)
+    if [ $? -ne 0 ]; then
+        echo "Error: Unable to reset SPEDE Target"
+        return 1
+    fi
+
+    tty=$(spede_target_tty)
+    if [ $? -ne 0 ]; then
+        echo "Error: Unable to determine the SPEDE Target TTY"
+        return 1
+    fi
+
+    echo "Downloading image '${image}' to SPEDE Target via ${tty}..."
+    ${run_config[dl]} ${image} ${tty}
+    if [ $? -ne 0 ]; then
+        echo "Error: Unable to download image '${image}' to the SPEDE Target"
+        return 1
+    fi
+
+    echo "Enabling GDB..."
+    ${run_config[fs]} ${tty} e
+    if [ $? -ne 0 ]; then
+        echo "Error: Unable to enable GDB debugging on the target"
+        return 1
+    fi
+    sleep 1
+
+    cmd_spederc=
+    cmd_localrc=
+    cmd_gdb_helpers=
+
+    if [ -f ${run_config[spederc]} ]; then
+        cmd_spederc="-command=${run_config[spederc]}"
+    fi
+
+    if [ -f ${run_config[localrc]} ]; then
+        cmd_localrc="-command=${run_config[localrc]}"
+    fi
+
+#    if [ -f ${run_config[gdb_helpers]} ]; then
+#        cmd_gdb_helpers="-ex 'source ${run_config[gdb_helpers]} '"
+#    fi
+
+    echo "Launching GDB..."
+    ${run_config[gdb]} -q \
+        -ex "target remote ${tty}" \
+        ${cmd_spederc} \
+        ${cmd_localrc} \
+        ${cmd_gdb_helpers} \
+        -nx -readnow \
+        ${image}
+}
+
+function __qemu_exec() {
+    json=$(${run_config[qmp]} --socket ${run_config[socket]} $1 2>/dev/null)
+    if [ $? -ne 0 ]; then
+        return 1
+    fi
+
+    echo ${json}
+    return 0
+}
+
+function spede_target_tty() {
+    json=$(__qemu_exec query-chardev)
+    if [ $? -ne 0 ]; then
+        return 1
+    fi
+
+    output=$(echo "${json}" | jq -r '.return[] | select(.label == "com1").filename' 2>/dev/null)
+    if [ $? -ne 0 ]; then
+        return 1
+    fi
+
+    tty=$(echo ${output} | cut -d : -f 2-)
+    if [ -c ${tty} ]; then
+        echo ${tty}
+        return 0
+    fi
+
+    return 1
+}
+
+function spede_target_status() {
+    json=$(__qemu_exec query-status)
+    if [ $? -ne 0 ]; then
+        return 1
+    fi
+
+    output=$(echo "${json}" | jq -r '.return.status')
+    if [ $? -ne 0 ]; then
+        return 1
+    fi
+
+    echo ${output}
+    return 0
+}
+
+main $@
+exit $?

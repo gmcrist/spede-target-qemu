@@ -1,0 +1,98 @@
+#!/usr/bin/python3
+import getopt
+import json
+import json
+import os
+import socket
+import stat
+import sys
+
+def usage():
+    print("Usage: qemu-qmp [options] <command>")
+    print("")
+    print("Options:")
+    print("")
+    print("  -s | --socket     Specifies the QEMU socket to connect to")
+    print("")
+
+class qmp:
+    def __init__(self, socket_file):
+        self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.socket.connect(str(socket_file))
+        self.file = self.socket.makefile('rw')
+        self._initialize()
+
+    def execute(self, command, arguments={}):
+        json_cmd = json.dumps({'execute': command}) + '\n'
+        self.socket.sendall(json_cmd.encode('utf-8'))
+        return self.file.readline()
+
+    def execute_human(self, command):
+        json_cmd = json.dumps({'execute': 'human-monitor-command', 'arguments': { 'command-line': command }})
+        self.socket.sendall(json_cmd.encode('utf-8'))
+        return self.file.readline()
+
+    def close(self):
+        self.socket.close()
+
+    def _initialize(self):
+        cap = self.file.readline()
+        self.execute('qmp_capabilities')
+
+def main():
+    cmd_defaults={
+        'socket': 'spede.sock',
+    }
+
+    cmd_config=cmd_defaults
+
+    try:
+        opts, args = getopt.getopt(sys.argv[1:], 'hs:', ["help", "socket="])
+    except getopt.GetoptError as err:
+        print(err)
+        usage()
+        return 1
+
+    for o, a in opts:
+        if o in ('-h', '--help'):
+            usage()
+            return
+        elif o in ('-s', '--socket'):
+            cmd_config['socket']=a
+        else:
+            print("Unknown option")
+            sys.exit(1)
+
+    try:
+        mode = os.stat(cmd_config['socket'])
+    except:
+        print("Socket does not exist")
+        return 1
+
+    if not stat.S_ISSOCK(mode.st_mode):
+        print("Invalid socket")
+        return 1
+
+    try:
+        qemu = qmp(cmd_config['socket'])
+    except:
+        print("Unable to load QEMU QMP interface")
+        return 1
+
+    if len(args) == 0:
+        usage()
+        return 1
+
+    if args[0] == "human":
+        result = json.loads(qemu.execute_human(' '.join(args[1:])))
+        if result['return']:
+            print(result['return'])
+    else:
+        result = qemu.execute(args[0], args[1:])
+        print(result)
+
+    qemu.close()
+    return 1
+
+if __name__ == "__main__":
+    main()
