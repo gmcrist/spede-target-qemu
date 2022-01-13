@@ -27,14 +27,14 @@ document run
 end
 
 # Print stack frame details
-define frame
-    info frame
-    info args
-    info locals
-end
-document frame
-Prints the stack frame details
-end
+#define frame
+#    info frame
+#    info args
+#    info locals
+#end
+#document frame
+#Prints the stack frame details
+#end
 
 # Display the last error reason from GDB
 define reason
