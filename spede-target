@@ -7,9 +7,10 @@ qemu_defaults=(
     [monitor]=""
     [display]="-display gtk,grab-on-hover=off"
     [socket]="./spede.sock"
-    [logfile]="./spede.log"
+    [logfile]="/dev/null"
     [image]="${spede_root}/share/images/spede-target/spede-target.qcow2"
     [qemu]="qemu-system-i386"
+    [qmp]="${spede_root}/bin/qemu-qmp"
     [background]=1
     [console]=0
     [xsession]=1
@@ -44,7 +45,9 @@ function usage() {
     echo ""
     echo "  -i | --image       Specifies the SPEDE Target image to execute (not .dli)"
     echo ""
-    echo "SPEDE Target will run the background unless one of the following options"
+    echo "  -q | --quit        Quits the SPEDE Target"
+    echo ""
+    echo "The SPEDE Target will run the background unless one of the following options"
     echo "are specified:"
     echo "  --monitor console"
     echo "  --display term"
@@ -61,12 +64,20 @@ function check_deps() {
         return 1
     fi
     return 0
+
+    jq=$(which jq)
+    if [[ $? -ne 0 || ! -x ${jq} ]]; then
+        echo "Error: jq is not installed or not executable"
+        return 1
+    fi
 }
 
 function main() {
     check_deps || return $?
 
-    temp=$(getopt -o hm:d:s:l:i: --long help,monitor:,display:,socket:,logfile:,image: -n spede-target -- "$@")
+    flag_quit=0
+
+    temp=$(getopt -o hm:d:s:l:i:q --long help,monitor:,display:,socket:,logfile:,image:,quit -n spede-target -- "$@")
     while true; do
         case "$1" in
             -h | --help)
@@ -139,6 +150,11 @@ function main() {
                 shift 2
                 ;;
 
+            -q | --quit)
+                flag_quit=1
+                shift
+                ;;
+
             -- )
                 shift
                 break
@@ -175,20 +191,61 @@ function main() {
         return
     fi
 
+    if [ -S ${qemu_config[socket]} ]; then
+        # Determine if the SPEDE target is running
+        # If it is _not_ running, delete the socket and continue
+        status=$(spede_target_status)
+
+        if [[ $? -ne 0 || "${status}" != "running" ]]; then
+            echo "The socket file '${qemu_config[socket]}' exists but SPEDE doesn't appear to be running"
+            echo ""
+            read -p "Delete the socket and continue execution? (y/n) " confirm
+
+            case "${confirm}" in
+                [yY]|[yY][eE][sS] )
+                    ;;
+
+                *)
+                    echo "Exiting..."
+                    return 1
+            esac
+        else
+            if [ ${flag_quit} -eq 1 ]; then
+                output=$(__qemu_exec quit)
+
+                if [ $? -ne 0 ]; then
+                    echo "Error: Unable to quit the SPEDE Target. Exiting..."
+                    return 1
+                else
+                    echo "The SPEDE Target has quit. Exiting..."
+                    return 0
+                fi
+            fi
+
+            echo "Error: The SPEDE Target is already running and can't be started again with the same socket"
+            return 1
+        fi
+
+        rm ${qemu_config[socket]}
+        if [ $? -ne 0 ]; then
+            echo "Error deleting socket '${qemu_config[socket]}'. Exiting ..."
+            return 1
+        fi
+    elif [ -f ${qemu_config[socket]} ]; then
+        echo "Socket '${qemu_config[socket]}' is not a valid socket. Exiting..."
+        return 1
+    fi
+
+    if [ ${flag_quit} -eq 1 ]; then
+        echo "The SPEDE Target is not running, ignoring command to quit."
+    fi
+
     if [ ${qemu_config[xsession]} -eq 1 ]; then
         xhost >&/dev/null
         if [ $? -ne 0 ]; then
             echo "Error: Display is configured to use local desktop session but none exists"
             return 1
         fi
-    fi
-
-    if [ -S ${qemu_config[socket]} ]; then
-        echo "Socket '${qemu_config[socket]}' already exists. Exiting..."
-        return 1
-    elif [ -f ${qemu_config[socket]} ]; then
-        echo "Socket '${qemu_config[socket]}' is not a valid socket. Exiting..."
-        return 1
     fi
 
     if [ ${qemu_config[background]} -ne 0 ]; then
@@ -203,6 +260,31 @@ function main() {
             rm ${qemu_config[socket]}
         fi
     fi
+}
+
+function __qemu_exec() {
+    json=$(${qemu_config[qmp]} --socket ${qemu_config[socket]} $1 2>/dev/null)
+    if [ $? -ne 0 ]; then
+        return 1
+    fi
+
+    echo ${json}
+    return 0
+}
+
+function spede_target_status() {
+    json=$(__qemu_exec query-status)
+    if [ $? -ne 0 ]; then
+        return 1
+    fi
+
+    output=$(echo "${json}" | jq -r '.return.status')
+    if [ $? -ne 0 ]; then
+        return 1
+    fi
+
+    echo ${output}
+    return 0
 }
 
 function launch_spede_target() {

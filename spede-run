@@ -130,8 +130,6 @@ function main() {
     if [[ $? -ne 0 || "${status}" != "running" ]]; then
         echo "The SPEDE Target does not appear to be running."
         echo "Ensure that you have started the SPEDE Target."
-
-        echo "Status: ${status}"
         return 1
     fi
 
@@ -150,10 +148,10 @@ function main() {
     fi
 
     # Reset the SPEDE Target system
-    echo "Resetting SPEDE Target..."
+    echo "Resetting the SPEDE Target..."
     output=$(__qemu_exec system_reset)
     if [ $? -ne 0 ]; then
-        echo "Error: Unable to reset SPEDE Target"
+        echo "Error: Unable to reset the SPEDE Target"
         return 1
     fi
 
@@ -173,7 +171,7 @@ function main() {
     echo "Enabling GDB..."
     ${run_config[fs]} ${tty} e
     if [ $? -ne 0 ]; then
-        echo "Error: Unable to enable GDB debugging on the target"
+        echo "Error: Unable to enable GDB on the SPEDE Target"
         return 1
     fi
     sleep 1

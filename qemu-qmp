@@ -39,6 +39,10 @@ class qmp:
         cap = self.file.readline()
         self.execute('qmp_capabilities')
 
+def build_error(errstr):
+    obj={'error': errstr}
+    return json.dumps(obj)
+
 def main():
     cmd_defaults={
         'socket': 'spede.sock',
@@ -49,7 +53,7 @@ def main():
     try:
         opts, args = getopt.getopt(sys.argv[1:], 'hs:', ["help", "socket="])
     except getopt.GetoptError as err:
-        print(err)
+        print(build_error(err))
         usage()
         return 1
 
@@ -60,23 +64,23 @@ def main():
         elif o in ('-s', '--socket'):
             cmd_config['socket']=a
         else:
-            print("Unknown option")
+            print(build_error("Unknown option"))
             sys.exit(1)
 
     try:
         mode = os.stat(cmd_config['socket'])
     except:
-        print("Socket does not exist")
+        print(build_error("Socket does not exist"))
         return 1
 
     if not stat.S_ISSOCK(mode.st_mode):
-        print("Invalid socket")
+        print(build_error("Invalid socket"))
         return 1
 
     try:
         qemu = qmp(cmd_config['socket'])
     except:
-        print("Unable to load QEMU QMP interface")
+        print(build_error("Unable to load QEMU QMP interface"))
         return 1
 
     if len(args) == 0:
