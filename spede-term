@@ -1,0 +1,231 @@
+#!/bin/bash
+
+spede_root=${SPEDE_ROOT:-/opt/spede}
+
+typeset -A spede_config
+spede_config=(
+    [socket]="spede.sock"
+    [qmp]="${spede_root}/bin/qemu-qmp"
+    [baudrate]=9600
+)
+
+typeset -A spede_config
+for i in ${!spede_config[*]}; do
+    spede_config[${i}]=${spede_config[${i}]}
+done
+
+function usage() {
+    self=$(basename $0)
+    echo "Usage: ${self} [options] <port>"
+    echo ""
+    echo "Valid ports include: COM2, COM3, or COM4"
+    echo ""
+    echo "Options:"
+    echo " -s | --socket     Specifies the control socket location for the"
+    echo "                   SPEDE target"
+    echo ""
+    echo " -b | --baudrate   Specifies the baudrate for the terminal connection"
+    echo ""
+}
+
+function check_deps() {
+    jq=$(which jq)
+    if [[ $? -ne 0 || ! -x ${jq} ]]; then
+        echo "Error: jq is not installed or not executable"
+        return 1
+    fi
+
+    qmp=$(which ${spede_config[qmp]})
+    if [[ $? -ne 0 || ! -x ${qmp} ]]; then
+        echo "Error: QEMU QMP is not installed or is not executable"
+        return 1
+    fi
+
+    minicom=$(which minicom)
+    if [[ $? -ne 0 || ! -x ${minicom} ]]; then
+        echo "Error: Minicom is not installed or are not executable"
+        return 1
+    fi
+}
+
+function main() {
+    check_deps || return $?
+
+    temp=$(getopt \
+           -o hs:b: \
+           --long help,socket:,baudrate: \
+           -n spede-term -- "$@")
+    while true; do
+        case "$1" in
+            -h | --help)
+                usage
+                return 0
+                ;;
+
+            -s | --socket)
+                spede_config[socket]=$2
+                shift 2
+                ;;
+
+            -b | --baudrate)
+                spede_config[baudrate]=$2
+                baudrate=$2
+                case "${baudrate}" in
+                    100) ;;
+                    300) ;;
+                    1200) ;;
+                    2400) ;;
+                    4800) ;;
+                    9600) ;;
+                    19200) ;;
+                    38400) ;;
+                    57600) ;;
+                    115200)
+                        spede_config[baudrate]=${baudrate}
+                        break
+                        ;;
+
+                    *)
+                        echo "Error: The baud rate ${baudrate} is not supported"
+                        echo "Valid values include:"
+                        echo "100, 300, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200"
+                        return 1
+                        ;;
+                esac
+
+                shift 2
+                ;;
+
+            -- )
+                shift
+                break
+                ;;
+
+            *) break
+                ;;
+        esac
+    done
+
+    if [[ -v CONFIG_DUMP ]]; then
+        echo ""
+        echo "Defaults:"
+        for i in ${!spede_config[*]}; do
+            echo "  ${i}: ${spede_config[${i}]}"
+        done
+        echo ""
+
+        echo "Config:"
+        for i in ${!spede_config[*]}; do
+            echo "  ${i}: ${spede_config[${i}]}"
+        done
+        echo ""
+
+        return
+    fi
+
+    if [ $# -lt 1 ]; then
+        echo "Error: no port specified"
+        echo ""
+        usage
+        return 1
+    fi
+
+    if [ ! -S ${spede_config[socket]} ]; then
+        echo "Socket '${spede_config[socket]}' does not exist. Exiting..."
+        return 1
+    fi
+
+    # Determine if the SPEDE target is running
+    # If it is _not_ running, display a message and exit
+    status=$(spede_target_status)
+
+    if [[ $? -ne 0 || "${status}" != "running" ]]; then
+        echo "The SPEDE Target does not appear to be running."
+        echo "Ensure that you have started the SPEDE Target."
+        return 1
+    fi
+
+    device=$(echo "$1" | tr '[:upper:]' '[:lower:]')
+    case "${device}" in
+        2|com2)
+            device="com2"
+            ;;
+
+        3|com3)
+            device="com3"
+            ;;
+
+        4|com4)
+            device="com4"
+            ;;
+
+        *)
+            echo "Port $1 is not supported"
+            return 1
+            ;;
+    esac
+
+    tty=$(spede_target_tty ${device})
+    if [ $? -ne 0 ]; then
+        echo "Error: Unable to determine the SPEDE Target TTY for ${device}"
+        return 1
+    fi
+
+    echo "Opening terminal to SPEDE Target on ${device} (${tty}) with baud rate of ${spede_config[baudrate]}"
+
+    minicom -o -b ${spede_config[baudrate]} -D ${tty}
+}
+
+function __qemu_exec() {
+    json=$(${spede_config[qmp]} --socket ${spede_config[socket]} $1 2>/dev/null)
+    if [ $? -ne 0 ]; then
+        return 1
+    fi
+
+    echo ${json}
+    return 0
+}
+
+function spede_target_tty() {
+    json=$(__qemu_exec query-chardev)
+    if [ $? -ne 0 ]; then
+        return 1
+    fi
+
+    if [ $# -gt 0 ]; then
+        device=$1
+    else
+        device="com1"
+    fi
+
+    output=$(echo "${json}" | jq -r '.return[] | select(.label == "'${device}'").filename' 2>/dev/null)
+    if [ $? -ne 0 ]; then
+        return 1
+    fi
+
+    tty=$(echo ${output} | cut -d : -f 2-)
+    if [ -c ${tty} ]; then
+        echo ${tty}
+        return 0
+    fi
+
+    return 1
+}
+
+function spede_target_status() {
+    json=$(__qemu_exec query-status)
+    if [ $? -ne 0 ]; then
+        return 1
+    fi
+
+    output=$(echo "${json}" | jq -r '.return.status')
+    if [ $? -ne 0 ]; then
+        return 1
+    fi
+
+    echo ${output}
+    return 0
+}
+
+main $@
+exit $?
