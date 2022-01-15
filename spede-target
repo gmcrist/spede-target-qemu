@@ -237,7 +237,8 @@ function main() {
     fi
 
     if [ ${flag_quit} -eq 1 ]; then
-        echo "The SPEDE Target is not running, ignoring command to quit."
+        echo "The SPEDE Target is not running"
+        return 0
     fi
 
     if [ ${qemu_config[xsession]} -eq 1 ]; then
