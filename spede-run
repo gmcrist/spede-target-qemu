@@ -68,6 +68,13 @@ function main() {
     check_deps || return $?
 
     temp=$(getopt -o has: --long help,auto,socket: -n spede-run -- "$@")
+
+    if [ $? -ne 0 ]; then
+        echo ""
+        usage
+        return 1
+    fi
+
     while true; do
         case "$1" in
             -h | --help)

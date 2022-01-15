@@ -28,11 +28,11 @@ function usage() {
     echo "Options:"
     echo "  -d | --display     Specifies which type of display to support:"
     echo "                       vnc:     Creates a VNC server"
-    echo "                       term:    Outputs to the current terminal/console"
+    echo "                       console: Outputs to the current terminal/console"
     echo "                       default: Opens a window in the current desktop session"
     echo ""
     echo "  -m | --monitor     Enables the QEMU monitor via standard input/output"
-    echo "                       console: Opens the monitor on the current console"
+    echo "                       console: Opens the monitor on the current terminal/console"
     echo "                       socket:  Opens the monitor on a socket"
     echo "                       default: none"
     echo ""
@@ -78,6 +78,13 @@ function main() {
     flag_quit=0
 
     temp=$(getopt -o hm:d:s:l:i:q --long help,monitor:,display:,socket:,logfile:,image:,quit -n spede-target -- "$@")
+
+    if [ $? -ne 0 ]; then
+        echo ""
+        usage
+        return 1
+    fi
+
     while true; do
         case "$1" in
             -h | --help)
@@ -252,6 +259,23 @@ function main() {
     if [ ${qemu_config[background]} -ne 0 ]; then
         echo "Launching SPEDE target to run in the background"
         launch_spede_target >>${qemu_config[logfile]} 2>&1 &
+
+        sleep 1
+
+        if [ ! -S ${qemu_config[socket]} ]; then
+            echo "The SPEDE target does not appear to have started correctly."
+            echo "Enable logging and try again if the problem continues."
+            return 1
+        fi
+
+        status=$(spede_target_status)
+
+        if [[ $? != 0 || "${status}" != "running" ]]; then
+            echo "The SPEDE target does not appear to have started correctly."
+            echo "Enable logging and try again if the problem continues."
+            rm ${qemu_config[socket]}
+            return 1
+        fi
     else
         echo "Launching SPEDE target to run in the foreground"
         launch_spede_target
