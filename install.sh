@@ -4,7 +4,7 @@ spede_root=${SPEDE_ROOT:-/opt/spede}
 
 typeset -A install_dirs
 install_dirs=(
-    [bin]="spede-run spede-target qemu-qmp"
+    [bin]="spede-run spede-target spede-term qemu-qmp"
     [etc]="spede.gdbinit"
     [lib]="gdb_helpers.py"
     [share/images/spede-target]="spede-target.qcow2"
