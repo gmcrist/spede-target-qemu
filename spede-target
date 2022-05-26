@@ -15,6 +15,7 @@ spede_defaults=(
     [console]=0
     [xsession]=1
     [parallel]="-parallel none"
+    [vnc]=0
 )
 
 typeset -A spede_config
@@ -39,12 +40,24 @@ function usage() {
     echo "                       console: Outputs to the current terminal/console"
     echo "                       default: Opens a window in the current desktop session"
     echo ""
+    echo "  -v | --vnc         Specifies which VNC session to use if using a VNC display"
+    echo "                       default: 0"
+    echo ""
     echo "  -m | --monitor     Enables the QEMU monitor via standard input/output"
     echo "                       console: Opens the monitor on the current terminal/console"
     echo "                       socket:  Opens the monitor on a socket"
     echo "                       default: none"
     echo ""
     echo "  -p | --parallel    Enables the parallel port on the SPEDE Target"
+    echo ""
+    echo "  -k | --kill        Kills all SPEDE target processes that can be found"
+    echo ""
+    echo "  -s | --socket      Specifies the control socket location for other scripts"
+    echo "                     or programs to communicate with the QEMU session"
+    echo "                       default: ./qemu.sock"
+    echo ""
+    echo "  -l | --logfile     Specifies the log file location"
+    echo "                       default: /dev/null"
     echo ""
     echo "  -i | --image       Specifies the SPEDE Target image to execute (not .dli)"
     echo ""
@@ -79,10 +92,11 @@ function main() {
     check_deps || return $?
 
     flag_quit=0
+    flag_kill=0
 
     temp=$(getopt \
-           -o hm:d:s:l:i:pq \
-           --long help,monitor:,display:,socket:,logfile:,image:,parallel,quit \
+           -o hm:d:s:l:i:pqkv: \
+           --long help,monitor:,display:,socket:,logfile:,image:,parallel,quit,kill,vnc: \
            -n spede-target -- "$@")
 
     if [ $? -ne 0 ]; then
@@ -125,18 +139,15 @@ function main() {
             -d | --display)
                 case "$2" in
                     console)
-                        spede_config[display]="-display curses"
-                        spede_config[background]=0
-                        spede_config[console]+=1
-                        spede_config[xsession]=0;
+                        flag_display="console"
                         ;;
 
                     vnc)
-                        spede_config[display]="-display vnc=:0"
-                        spede_config[xsession]=0;
+                        flag_display="vnc"
                         ;;
 
                     default)
+                        flag_display="default"
                         ;;
 
                     *)
@@ -145,6 +156,12 @@ function main() {
                         ;;
                 esac
 
+                shift 2
+                ;;
+
+            -v | --vnc)
+                flag_display="vnc"
+                spede_config[vnc]=$2
                 shift 2
                 ;;
 
@@ -174,6 +191,11 @@ function main() {
                 shift
                 ;;
 
+            -k | --killall)
+                flag_kill=1
+                shift
+                ;;
+
             -- )
                 shift
                 break
@@ -184,6 +206,23 @@ function main() {
                 ;;
         esac
     done
+
+    case "$flag_display" in
+        console)
+            spede_config[display]="-display curses"
+            spede_config[background]=0
+            spede_config[console]+=1
+            spede_config[xsession]=0
+            ;;
+
+        vnc)
+            spede_config[display]="-display vnc=:${spede_config[vnc]}"
+            spede_config[xsession]=0
+            ;;
+
+        default)
+            ;;
+    esac
 
     if [ ${spede_config[console]} -gt 1 ]; then
         echo "Monitor is configured for console, resetting display to default"
@@ -208,6 +247,34 @@ function main() {
         echo ""
 
         return
+    fi
+
+    if [ ${flag_kill} -eq 1 ]; then
+        # Get our own uid to compare with other spede processes
+        uid=$(id -u)
+
+        echo "Attempting to kill all SPEDE target processes..."
+        for pid in $(pgrep -f ${spede_config[qemu]}); do
+            ignore=$(ps -p ${pid} -o args= | grep -q "SPEDE Target")
+            if [ $? -ne 0 ]; then
+                echo "    pid ${pid} does not match a SPEDE target"
+                continue
+            fi
+
+#            puid=$(ps -p ${pid} -o uid=)
+#            if [ ${puid} -ne ${uid} ]; then
+#                continue
+#            else
+                kill -9 ${pid}
+                if [ $? -ne 0 ]; then
+                    echo "    pid ${pid} could not be killed"
+                else
+                    echo "    pid ${pid} has been killed"
+                fi
+#            fi
+        done
+        echo "Done!"
+        echo ""
     fi
 
     if [ -S ${spede_config[socket]} ]; then
