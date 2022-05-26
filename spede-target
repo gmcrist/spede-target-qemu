@@ -1,8 +1,8 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 spede_root=${SPEDE_ROOT:-/opt/spede}
 
-typeset -A spede_defaults
+declare -A spede_defaults
 spede_defaults=(
     [monitor]=""
     [display]="-display gtk,grab-on-hover=off"
@@ -18,7 +18,7 @@ spede_defaults=(
     [vnc]=0
 )
 
-typeset -A spede_config
+declare -A spede_config
 for i in ${!spede_defaults[*]}; do
     spede_config[${i}]=${spede_defaults[${i}]}
 done

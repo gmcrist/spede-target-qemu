@@ -1,8 +1,8 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 spede_root=${SPEDE_ROOT:-/opt/spede}
 
-typeset -A run_defaults
+declare -A run_defaults
 run_defaults=(
     [auto]=0
     [image]="build/MyOS.dli"
@@ -16,7 +16,7 @@ run_defaults=(
     [gdb_helpers]="${spede_root}/lib/gdb_helpers.py"
 )
 
-typeset -A run_config
+declare -A run_config
 for i in ${!run_defaults[*]}; do
     run_config[${i}]=${run_defaults[${i}]}
 done

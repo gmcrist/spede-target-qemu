@@ -1,15 +1,15 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 spede_root=${SPEDE_ROOT:-/opt/spede}
 
-typeset -A spede_config
+declare -A spede_config
 spede_config=(
     [socket]="spede.sock"
     [qmp]="${spede_root}/bin/qemu-qmp"
     [baudrate]=9600
 )
 
-typeset -A spede_config
+declare -A spede_config
 for i in ${!spede_config[*]}; do
     spede_config[${i}]=${spede_config[${i}]}
 done

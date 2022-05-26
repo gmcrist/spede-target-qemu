@@ -1,8 +1,8 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 spede_root=${SPEDE_ROOT:-/opt/spede}
 
-typeset -A install_dirs
+declare -A install_dirs
 install_dirs=(
     [bin]="spede-run spede-target spede-term qemu-qmp"
     [etc]="spede.gdbinit"
