@@ -6,7 +6,7 @@ declare -A qemu_defaults
 qemu_defaults=(
     [monitor]=""
     [display]="-display gtk,grab-on-hover=off"
-    [socket]="./spede.sock"
+    [socket]="${SPEDE_SOCKET:-./spede.sock}"
     [logfile]="/dev/null"
     [image]="${spede_root}/share/images/spede-target/spede-target.qcow2"
     [qemu]="qemu-system-i386"
@@ -280,8 +280,7 @@ function main() {
     fi
 
     if [ ${qemu_config[xsession]} -eq 1 ]; then
-        xhost >&/dev/null
-        if [ $? -ne 0 ]; then
+        if [ ! gui_available ]; then
             echo "Error: Display is configured to use local desktop session but none exists"
             return 1
         fi
@@ -316,6 +315,43 @@ function main() {
             rm ${qemu_config[socket]}
         fi
     fi
+}
+
+function gui_available() {
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # Thanks to https://stackoverflow.com/questions/54995983/how-to-detect-availability-of-gui-in-bash-shell
+        command -v swift >&/dev/null && swift <(cat <<"EOF"
+            import Security
+            var attrs = SessionAttributeBits(rawValue:0)
+            let result = SessionGetInfo(callerSecuritySession, nil, &attrs)
+            exit((result == 0 && attrs.contains(.sessionHasGraphicAccess)) ? 0 : 1)
+EOF
+)
+        if [ $? -eq 0 ]; then
+            #echo "MacOS Native"
+            return 1
+        fi
+
+        if [[ -n "$DISPLAY" ]]; then
+            #echo "MacOS X11"
+            return 1
+        fi
+    else
+        command -v xhost && xhost >&/dev/null
+        if [ $? -eq 0 ]; then
+            echo "*nix X11"
+            return 1
+        fi
+    fi
+
+    # Least trustworthy fallback, but try it anyways
+    if [[ -n "$DISPLAY" ]]; then
+        echo "*nix X11 ($DISPLAY)"
+        return 1
+    fi
+
+    # No GUI is available
+    return 0
 }
 
 function __qemu_exec() {
@@ -355,7 +391,6 @@ function launch_spede_target() {
         -snapshot \
         -k en-us \
         -vga std \
-        -no-acpi \
         -net none \
         -drive file=${qemu_config[image]} \
         -chardev pty,id=com1 \

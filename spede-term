@@ -4,7 +4,7 @@ spede_root=${SPEDE_ROOT:-/opt/spede}
 
 declare -A spede_config
 spede_config=(
-    [socket]="spede.sock"
+    [socket]="${SPEDE_SOCKET:-./spede.sock}"
     [qmp]="${spede_root}/bin/qemu-qmp"
     [baudrate]=9600
 )
