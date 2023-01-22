@@ -2,8 +2,8 @@
 
 spede_root=${SPEDE_ROOT:-/opt/spede}
 
-declare -A spede_defaults
-spede_defaults=(
+declare -A qemu_defaults
+qemu_defaults=(
     [monitor]=""
     [display]="-display gtk,grab-on-hover=off"
     [socket]="./spede.sock"
@@ -14,13 +14,11 @@ spede_defaults=(
     [background]=1
     [console]=0
     [xsession]=1
-    [parallel]="-parallel none"
-    [vnc]=0
 )
 
-declare -A spede_config
-for i in ${!spede_defaults[*]}; do
-    spede_config[${i}]=${spede_defaults[${i}]}
+declare -A qemu_config
+for i in ${!qemu_defaults[*]}; do
+    qemu_config[${i}]=${qemu_defaults[${i}]}
 done
 
 function usage() {
@@ -28,33 +26,19 @@ function usage() {
     echo "Usage: ${self} [options]"
     echo ""
     echo "Options:"
-    echo "  -s | --socket      Specifies the control socket location for other scripts"
-    echo "                     or programs to communicate with the QEMU session"
-    echo "                       default: ./qemu.sock"
-    echo ""
-    echo "  -l | --logfile     Specifies the log file location"
-    echo "                       default: ./qemu.sock"
-    echo ""
     echo "  -d | --display     Specifies which type of display to support:"
     echo "                       vnc:     Creates a VNC server"
     echo "                       console: Outputs to the current terminal/console"
     echo "                       default: Opens a window in the current desktop session"
-    echo ""
-    echo "  -v | --vnc         Specifies which VNC session to use if using a VNC display"
-    echo "                       default: 0"
     echo ""
     echo "  -m | --monitor     Enables the QEMU monitor via standard input/output"
     echo "                       console: Opens the monitor on the current terminal/console"
     echo "                       socket:  Opens the monitor on a socket"
     echo "                       default: none"
     echo ""
-    echo "  -p | --parallel    Enables the parallel port on the SPEDE Target"
-    echo ""
-    echo "  -k | --kill        Kills all SPEDE target processes that can be found"
-    echo ""
     echo "  -s | --socket      Specifies the control socket location for other scripts"
     echo "                     or programs to communicate with the QEMU session"
-    echo "                       default: ./qemu.sock"
+    echo "                       default: ./spede.sock"
     echo ""
     echo "  -l | --logfile     Specifies the log file location"
     echo "                       default: /dev/null"
@@ -62,6 +46,8 @@ function usage() {
     echo "  -i | --image       Specifies the SPEDE Target image to execute (not .dli)"
     echo ""
     echo "  -q | --quit        Quits the SPEDE Target"
+    echo ""
+    echo "  -k | --kill        Kills all spede target processes that can be found and exits"
     echo ""
     echo "The SPEDE Target will run the background unless one of the following options"
     echo "are specified:"
@@ -74,7 +60,7 @@ function usage() {
 }
 
 function check_deps() {
-    qemu=$(which ${spede_config[qemu]})
+    qemu=$(which ${qemu_config[qemu]})
     if [[ $? -ne 0 || ! -x ${qemu} ]]; then
         echo "QEMU is not installed or cannot be executed"
         return 1
@@ -94,10 +80,7 @@ function main() {
     flag_quit=0
     flag_kill=0
 
-    temp=$(getopt \
-           -o hm:d:s:l:i:pqkv: \
-           --long help,monitor:,display:,socket:,logfile:,image:,parallel,quit,kill,vnc: \
-           -n spede-target -- "$@")
+    temp=$(getopt -o hm:d:s:l:i:kq --long help,monitor:,display:,socket:,logfile:,image:,kill,quit -n spede-target -- "$@")
 
     if [ $? -ne 0 ]; then
         echo ""
@@ -115,13 +98,13 @@ function main() {
             -m | --monitor)
                 case "$2" in
                     console)
-                        spede_config[monitor]="-monitor stdio"
-                        spede_config[background]=0
-                        spede_config[console]+=1
+                        qemu_config[monitor]="-monitor stdio"
+                        qemu_config[background]=0
+                        qemu_config[console]+=1
                         ;;
 
                     socket)
-                        spede_config[monitor]="-monitor unix:spede-monitor.sock,server,nowait"
+                        qemu_config[monitor]="-monitor unix:spede-monitor.sock,server,nowait"
                         ;;
 
                     default)
@@ -139,15 +122,18 @@ function main() {
             -d | --display)
                 case "$2" in
                     console)
-                        flag_display="console"
+                        qemu_config[display]="-display curses"
+                        qemu_config[background]=0
+                        qemu_config[console]+=1
+                        qemu_config[xsession]=0;
                         ;;
 
                     vnc)
-                        flag_display="vnc"
+                        qemu_config[display]="-display vnc=:0"
+                        qemu_config[xsession]=0;
                         ;;
 
                     default)
-                        flag_display="default"
                         ;;
 
                     *)
@@ -159,31 +145,19 @@ function main() {
                 shift 2
                 ;;
 
-            -v | --vnc)
-                flag_display="vnc"
-                spede_config[vnc]=$2
-                shift 2
-                ;;
-
             -s | --socket)
-                spede_config[socket]=$2
+                qemu_config[socket]=$2
                 shift 2
                 ;;
 
             -l | --logfile)
-                spede_config[logfile]=$2
+                qemu_config[logfile]=$2
                 shift 2
                 ;;
 
             -i | --image)
-                spede_config[image]=$2
+                qemu_config[image]=$2
                 shift 2
-                ;;
-
-            -p | --parallel)
-                spede_config[parallel]=""
-                shift
-                break
                 ;;
 
             -q | --quit)
@@ -191,7 +165,7 @@ function main() {
                 shift
                 ;;
 
-            -k | --killall)
+            -k | --kill)
                 flag_kill=1
                 shift
                 ;;
@@ -207,27 +181,10 @@ function main() {
         esac
     done
 
-    case "$flag_display" in
-        console)
-            spede_config[display]="-display curses"
-            spede_config[background]=0
-            spede_config[console]+=1
-            spede_config[xsession]=0
-            ;;
-
-        vnc)
-            spede_config[display]="-display vnc=:${spede_config[vnc]}"
-            spede_config[xsession]=0
-            ;;
-
-        default)
-            ;;
-    esac
-
-    if [ ${spede_config[console]} -gt 1 ]; then
+    if [ ${qemu_config[console]} -gt 1 ]; then
         echo "Monitor is configured for console, resetting display to default"
-        spede_config[display]=${spede_defaults[display]}
-        spede_config[xsession]=1
+        qemu_config[display]=${qemu_defaults[display]}
+        qemu_config[xsession]=1
     fi
 
     if [[ -v CONFIG_DUMP ]]; then
@@ -235,14 +192,14 @@ function main() {
         echo ""
 
         echo "Defaults:"
-        for i in ${!spede_defaults[*]}; do
-            echo "  ${i}: ${spede_defaults[${i}]}"
+        for i in ${!qemu_defaults[*]}; do
+            echo "  ${i}: ${qemu_defaults[${i}]}"
         done
         echo ""
 
         echo "Config:"
-        for i in ${!spede_config[*]}; do
-            echo "  ${i}: ${spede_config[${i}]}"
+        for i in ${!qemu_config[*]}; do
+            echo "  ${i}: ${qemu_config[${i}]}"
         done
         echo ""
 
@@ -250,40 +207,35 @@ function main() {
     fi
 
     if [ ${flag_kill} -eq 1 ]; then
-        # Get our own uid to compare with other spede processes
-        uid=$(id -u)
-
         echo "Attempting to kill all SPEDE target processes..."
-        for pid in $(pgrep -f ${spede_config[qemu]}); do
-            ignore=$(ps -p ${pid} -o args= | grep -q "SPEDE Target")
-            if [ $? -ne 0 ]; then
-                echo "    pid ${pid} does not match a SPEDE target"
-                continue
-            fi
+        for pid in $(pidof ${qemu_config[qemu]}); do
+            echo "Pid ${pid}... "
 
-#            puid=$(ps -p ${pid} -o uid=)
-#            if [ ${puid} -ne ${uid} ]; then
-#                continue
-#            else
+            $(grep -q "SPEDE Target" /proc/${pid}/cmdline)
+            if [ $? -ne 0 ]; then
+                echo "  Pid ${pid} does not match a SPEDE target"
+            else
                 kill -9 ${pid}
                 if [ $? -ne 0 ]; then
-                    echo "    pid ${pid} could not be killed"
+                    echo "  Could not kill pid ${pid}"
                 else
-                    echo "    pid ${pid} has been killed"
+                    echo "  Killed pid ${pid}"
                 fi
-#            fi
+            fi
         done
         echo "Done!"
         echo ""
+
+        return
     fi
 
-    if [ -S ${spede_config[socket]} ]; then
+    if [ -S ${qemu_config[socket]} ]; then
         # Determine if the SPEDE target is running
         # If it is _not_ running, delete the socket and continue
         status=$(spede_target_status)
 
         if [[ $? -ne 0 || "${status}" != "running" ]]; then
-            echo "The socket file '${spede_config[socket]}' exists but SPEDE doesn't appear to be running"
+            echo "The socket file '${qemu_config[socket]}' exists but SPEDE doesn't appear to be running"
             echo ""
             read -p "Delete the socket and continue execution? (y/n) " confirm
 
@@ -312,13 +264,13 @@ function main() {
             return 1
         fi
 
-        rm ${spede_config[socket]}
+        rm ${qemu_config[socket]}
         if [ $? -ne 0 ]; then
-            echo "Error deleting socket '${spede_config[socket]}'. Exiting ..."
+            echo "Error deleting socket '${qemu_config[socket]}'. Exiting ..."
             return 1
         fi
-    elif [ -f ${spede_config[socket]} ]; then
-        echo "Socket '${spede_config[socket]}' is not a valid socket. Exiting..."
+    elif [ -f ${qemu_config[socket]} ]; then
+        echo "Socket '${qemu_config[socket]}' is not a valid socket. Exiting..."
         return 1
     fi
 
@@ -327,7 +279,7 @@ function main() {
         return 0
     fi
 
-    if [ ${spede_config[xsession]} -eq 1 ]; then
+    if [ ${qemu_config[xsession]} -eq 1 ]; then
         xhost >&/dev/null
         if [ $? -ne 0 ]; then
             echo "Error: Display is configured to use local desktop session but none exists"
@@ -335,13 +287,13 @@ function main() {
         fi
     fi
 
-    if [ ${spede_config[background]} -ne 0 ]; then
+    if [ ${qemu_config[background]} -ne 0 ]; then
         echo "Launching SPEDE target to run in the background"
-        launch_spede_target >>${spede_config[logfile]} 2>&1 &
+        launch_spede_target >>${qemu_config[logfile]} 2>&1 &
 
         sleep 1
 
-        if [ ! -S ${spede_config[socket]} ]; then
+        if [ ! -S ${qemu_config[socket]} ]; then
             echo "The SPEDE target does not appear to have started correctly."
             echo "Enable logging and try again if the problem continues."
             return 1
@@ -352,7 +304,7 @@ function main() {
         if [[ $? != 0 || "${status}" != "running" ]]; then
             echo "The SPEDE target does not appear to have started correctly."
             echo "Enable logging and try again if the problem continues."
-            rm ${spede_config[socket]}
+            rm ${qemu_config[socket]}
             return 1
         fi
     else
@@ -360,14 +312,14 @@ function main() {
         launch_spede_target
 
         # Remove the socket once the spede target exits
-        if [ -S ${spede_config[socket]} ]; then
-            rm ${spede_config[socket]}
+        if [ -S ${qemu_config[socket]} ]; then
+            rm ${qemu_config[socket]}
         fi
     fi
 }
 
 function __qemu_exec() {
-    json=$(${spede_config[qmp]} --socket ${spede_config[socket]} $1 2>/dev/null)
+    json=$(${qemu_config[qmp]} --socket ${qemu_config[socket]} $1 2>/dev/null)
     if [ $? -ne 0 ]; then
         return 1
     fi
@@ -392,16 +344,20 @@ function spede_target_status() {
 }
 
 function launch_spede_target() {
-    echo "Target is reachable via ${spede_config[socket]}"
+    echo "Target is reachable via ${qemu_config[socket]}"
 
-    ${spede_config[qemu]} \
+    ${qemu_config[qemu]} \
         -name "SPEDE Target" \
         -M pc \
         -cpu 486 \
         -smp 1 \
         -m 32M \
         -snapshot \
-        -drive file=${spede_config[image]} \
+        -k en-us \
+        -vga std \
+        -no-acpi \
+        -net none \
+        -drive file=${qemu_config[image]} \
         -chardev pty,id=com1 \
         -serial chardev:com1 \
         -chardev pty,id=com2 \
@@ -410,13 +366,11 @@ function launch_spede_target() {
         -serial chardev:com3 \
         -chardev pty,id=com4 \
         -serial chardev:com4 \
-        ${spede_config[parallel]} \
-        -net none \
         -d cpu_reset,guest_errors \
-        -D ${spede_config[logfile]} \
-        -qmp unix:${spede_config[socket]},server,nowait \
-        ${spede_config[display]} \
-        ${spede_config[monitor]} 2>&1
+        -D ${qemu_config[logfile]} \
+        -qmp unix:${qemu_config[socket]},server,nowait \
+        ${qemu_config[display]} \
+        ${qemu_config[monitor]} 2>&1
 }
 
 main $@

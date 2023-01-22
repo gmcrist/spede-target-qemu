@@ -5,14 +5,15 @@ spede_root=${SPEDE_ROOT:-/opt/spede}
 declare -A run_defaults
 run_defaults=(
     [auto]=0
+    [debug]=0
     [image]="build/MyOS.dli"
     [socket]="spede.sock"
     [localrc]="./local.gdbinit"
     [spederc]="${spede_root}/etc/spede.gdbinit"
     [qmp]="${spede_root}/bin/qemu-qmp"
-    [dl]="${spede_root}/bin/dl"
+    [dl]="${spede_root}/bin/spede-download"
     [fs]="${spede_root}/bin/flash-sup"
-    [gdb]="/usr/bin/gdb"
+    [gdb]="${spede_root}/bin/i386-elf-gdb"
     [gdb_helpers]="${spede_root}/lib/gdb_helpers.py"
 )
 
@@ -28,6 +29,8 @@ function usage() {
     echo "Options:"
     echo " -s | --socket     Specifies the control socket location for the"
     echo "                   SPEDE target"
+    echo ""
+    echo " -d | --debug      Debug with GDB"
     echo ""
     echo " -a | --auto       Automatically proceed with any confirmation prompts"
     echo ""
@@ -67,7 +70,7 @@ function check_deps() {
 function main() {
     check_deps || return $?
 
-    temp=$(getopt -o has: --long help,auto,socket: -n spede-run -- "$@")
+    temp=$(getopt -o hads: --long help,auto,debug,socket: -n spede-run -- "$@")
 
     if [ $? -ne 0 ]; then
         echo ""
@@ -80,6 +83,11 @@ function main() {
             -h | --help)
                 usage
                 return 0
+                ;;
+
+            -d | --debug)
+                run_config[debug]=1
+                shift
                 ;;
 
             -a | --auto)
@@ -121,8 +129,13 @@ function main() {
 
     image=${1:-${run_config[image]}}
     if [ ! -f ${image} ]; then
-        echo "Image '${image}' cannot be found"
-        return 1
+	image=$(cat Makefile |grep "OS_NAME ?=" |cut -b 12-)
+	image="build/${image}.dli"
+
+        if [ ! -f ${image} ]; then
+            echo "Image '${image}' cannot be found"
+            return 1
+        fi
     fi
 
     if [ ! -S ${run_config[socket]} ]; then
@@ -169,23 +182,36 @@ function main() {
     fi
 
     echo "Downloading image '${image}' to SPEDE Target via ${tty}..."
-    ${run_config[dl]} ${image} ${tty}
-    if [ $? -ne 0 ]; then
-        echo "Error: Unable to download image '${image}' to the SPEDE Target"
-        return 1
+
+
+    if [ ${run_config[debug]} -eq 0 ]; then
+        ${run_config[dl]} ${image} ${tty}
+        if [ $? -ne 0 ]; then
+            echo "Error: Unable to download image '${image}' to the SPEDE Target"
+            return 1
+        fi
+
+        return 0
+    else
+        ${run_config[dl]} -g ${image} ${tty}
+        if [ $? -ne 0 ]; then
+            echo "Error: Unable to download image '${image}' to the SPEDE Target"
+            return 1
+        fi
     fi
 
-    echo "Enabling GDB..."
-    ${run_config[fs]} ${tty} e
-    if [ $? -ne 0 ]; then
-        echo "Error: Unable to enable GDB on the SPEDE Target"
-        return 1
-    fi
-    sleep 1
+#    echo "Enabling GDB..."
+#    ${run_config[fs]} ${tty} e
+#    if [ $? -ne 0 ]; then
+#        echo "Error: Unable to enable GDB on the SPEDE Target"
+#        return 1
+#    fi
+#    sleep 1
 
     cmd_spederc=
     cmd_localrc=
     cmd_gdb_helpers=
+    cmd_auto=
 
     if [ -f ${run_config[spederc]} ]; then
         cmd_spederc="-command=${run_config[spederc]}"
@@ -193,6 +219,10 @@ function main() {
 
     if [ -f ${run_config[localrc]} ]; then
         cmd_localrc="-command=${run_config[localrc]}"
+    fi
+
+    if [ ${run_config[auto]} -ne 0 ]; then
+        cmd_auto="-ex continue"
     fi
 
 #    if [ -f ${run_config[gdb_helpers]} ]; then
@@ -205,6 +235,7 @@ function main() {
         ${cmd_spederc} \
         ${cmd_localrc} \
         ${cmd_gdb_helpers} \
+        ${cmd_auto} \
         -nx -readnow \
         ${image}
 }
