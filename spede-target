@@ -16,6 +16,10 @@ qemu_defaults=(
     [xsession]=1
 )
 
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    qemu_defaults[display]="-display cocoa"
+fi
+
 declare -A qemu_config
 for i in ${!qemu_defaults[*]}; do
     qemu_config[${i}]=${qemu_defaults[${i}]}
@@ -65,7 +69,6 @@ function check_deps() {
         echo "QEMU is not installed or cannot be executed"
         return 1
     fi
-    return 0
 
     jq=$(which jq)
     if [[ $? -ne 0 || ! -x ${jq} ]]; then
