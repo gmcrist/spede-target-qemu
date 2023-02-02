@@ -211,10 +211,10 @@ function main() {
 
     if [ ${flag_kill} -eq 1 ]; then
         echo "Attempting to kill all SPEDE target processes..."
-        for pid in $(pidof ${qemu_config[qemu]}); do
+        for pid in $(pgrep -f ${qemu_config[qemu]}); do
             echo "Pid ${pid}... "
 
-            $(grep -q "SPEDE Target" /proc/${pid}/cmdline)
+            $(ps -p ${pid} -o command= | grep -q "SPEDE Target")
             if [ $? -ne 0 ]; then
                 echo "  Pid ${pid} does not match a SPEDE target"
             else
